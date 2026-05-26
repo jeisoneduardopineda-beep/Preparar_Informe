@@ -343,7 +343,10 @@ def procesar_archivo_260(archivo) -> pd.DataFrame:
             f"No encontré la columna Doc Paciente en el archivo 260: {nombre_archivo}"
         )
 
-    salida = pd.DataFrame()
+    # IMPORTANTE: crear el DataFrame con el mismo índice del archivo leído.
+    # Si se asigna un texto fijo sobre un DataFrame vacío, pandas deja esa columna en NaN.
+    # Luego groupby elimina los NaN y el reporte final sale en cero. Trampa elegante, como siempre.
+    salida = pd.DataFrame(index=df.index)
     salida["ARCHIVO_260"] = nombre_archivo
     salida["DOC_PACIENTE_ORIGINAL_260"] = df[doc_col]
     salida["DOC_NORM"] = df[doc_col].apply(normalizar_doc)
@@ -472,7 +475,9 @@ def procesar_archivo_264(archivo) -> pd.DataFrame:
             f"El archivo 264 {nombre_archivo} no tiene columnas mínimas requeridas: {', '.join(faltantes)}"
         )
 
-    salida = pd.DataFrame()
+    # IMPORTANTE: crear el DataFrame con el mismo índice del archivo leído.
+    # Si ARCHIVO_264 y SEDE quedan en NaN, el groupby final excluye todas las filas.
+    salida = pd.DataFrame(index=df.index)
     salida["ARCHIVO_264"] = nombre_archivo
     salida["SEDE"] = sede
     salida["FECHA_ORIGINAL_264"] = df[fecha_col].apply(convertir_fecha)
