@@ -227,7 +227,11 @@ def detectar_fila_encabezado(raw: pd.DataFrame) -> int:
         if puntaje > mejor_puntaje:
             mejor_puntaje = puntaje
             mejor_indice = i
-    return mejor_indice
+    return mejor_indice, mejor_puntaje
+# Puntaje mínimo de palabras clave para confiar en que una fila SÍ es el
+# encabezado real del reporte (y no una fila de datos que por casualidad
+# contiene alguna de las palabras).
+PUNTAJE_MINIMO_ENCABEZADO = 3
 def leer_excel_crystal(archivo) -> pd.DataFrame:
     """
     Lee un archivo Excel .xls o .xlsx proveniente de Crystal Reports.
@@ -256,6 +260,7 @@ def leer_excel_crystal(archivo) -> pd.DataFrame:
     except Exception as e:
         raise ValueError(f"No se pudo leer el archivo {nombre}. Detalle: {e}") from e
     dfs_hojas = []
+    columnas_referencia = None  # encabezado real más reciente encontrado en el libro
     for nombre_hoja in libro.sheet_names:
         try:
             raw_hoja = libro.parse(sheet_name=nombre_hoja, header=None, dtype=object)
@@ -265,9 +270,23 @@ def leer_excel_crystal(archivo) -> pd.DataFrame:
         raw_hoja = raw_hoja.dropna(how="all").reset_index(drop=True)
         if raw_hoja.empty:
             continue
-        fila_header = detectar_fila_encabezado(raw_hoja)
-        columnas_hoja = hacer_columnas_unicas(raw_hoja.iloc[fila_header].tolist())
-        df_hoja = raw_hoja.iloc[fila_header + 1:].copy()
+        fila_header, puntaje_header = detectar_fila_encabezado(raw_hoja)
+        if puntaje_header >= PUNTAJE_MINIMO_ENCABEZADO:
+            # Esta hoja SÍ trae su propia fila de encabezado (ej. "FECHA, DOC. PCTE., ...").
+            columnas_hoja = hacer_columnas_unicas(raw_hoja.iloc[fila_header].tolist())
+            df_hoja = raw_hoja.iloc[fila_header + 1:].copy()
+            columnas_referencia = columnas_hoja
+        elif columnas_referencia is not None and len(columnas_referencia) == raw_hoja.shape[1]:
+            # Hoja de continuación típica de Crystal Reports: mismas columnas que
+            # la última hoja con encabezado real, pero sin repetir la fila de título.
+            # Todas las filas de esta hoja son datos, ninguna se descarta como encabezado.
+            columnas_hoja = columnas_referencia
+            df_hoja = raw_hoja.copy()
+        else:
+            # Último recurso: no hay referencia previa ni encabezado confiable en
+            # esta hoja. Se usa la mejor fila candidata igual que antes.
+            columnas_hoja = hacer_columnas_unicas(raw_hoja.iloc[fila_header].tolist())
+            df_hoja = raw_hoja.iloc[fila_header + 1:].copy()
         df_hoja.columns = columnas_hoja
         df_hoja = df_hoja.dropna(how="all")
         if not df_hoja.empty:
