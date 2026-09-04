@@ -25,22 +25,27 @@ st.set_page_config(
 # ============================================================
 # MAPEO DE CÓDIGOS "DOC CONTABLE" (tomados del 260)
 # ============================================================
-# Reemplazo solicitado: el "Doc Contable" del 260 llega en formato
-# "F <numero>" y debe traducirse a la sigla de sede correspondiente.
+# Reemplazo solicitado: el "Doc Contable" llega en formato
+# "F <numero_sede> <consecutivo>" (ej. "F 6 55691", "F 7 50").
+# Se traduce solo el prefijo de sede a su sigla y se conserva el
+# consecutivo pegado, sin espacio (ej. "F 6 55691" -> "CLI55691").
 MAPEO_DOC_CONTABLE = {
-    "F 6": "CLI",
-    "F 7": "COCV",
-    "F 92": "FLTA",
-    "F 97": "TNJ",
-    "F 98": "VILL",
-    "F 99": "ZIP",
-    "F 5": "ONC",
+    "6": "CLI",
+    "7": "COCV",
+    "92": "FLTA",
+    "97": "TNJ",
+    "98": "VILL",
+    "99": "ZIP",
+    "5": "ONC",
 }
+PATRON_DOC_CONTABLE = re.compile(r"^F\s*(\d+)\s*(.*)$", re.IGNORECASE)
 def aplicar_mapeo_doc_contable(valor) -> str:
     """
-    Traduce el código "Doc Contable" (ej. "F 6") a su sigla (ej. "CLI").
-    Si el valor no está en el mapeo, se conserva tal cual (limpio de espacios dobles)
-    para no perder información no contemplada.
+    Traduce el prefijo de sede del "Doc Contable" (ej. "F 6" en "F 6 55691")
+    a su sigla (ej. "CLI"), conservando el consecutivo pegado: "CLI55691".
+    Si el valor no coincide con el patrón "F <numero> ..." o el número de
+    sede no está en el mapeo, se conserva el texto original (limpio de
+    espacios dobles) para no perder información no contemplada.
     """
     if pd.isna(valor):
         return ""
@@ -48,7 +53,14 @@ def aplicar_mapeo_doc_contable(valor) -> str:
     if texto == "":
         return ""
     texto_norm = re.sub(r"\s+", " ", texto).upper()
-    return MAPEO_DOC_CONTABLE.get(texto_norm, texto_norm)
+    coincidencia = PATRON_DOC_CONTABLE.match(texto_norm)
+    if not coincidencia:
+        return texto_norm
+    numero_sede, resto = coincidencia.groups()
+    sigla = MAPEO_DOC_CONTABLE.get(numero_sede)
+    if sigla is None:
+        return texto_norm
+    return f"{sigla}{resto.strip()}"
 # ============================================================
 # FUNCIONES DE LIMPIEZA
 # ============================================================
