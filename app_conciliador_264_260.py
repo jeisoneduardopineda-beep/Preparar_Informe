@@ -231,6 +231,9 @@ def detectar_fila_encabezado(raw: pd.DataFrame) -> int:
 def leer_excel_crystal(archivo) -> pd.DataFrame:
     """
     Lee un archivo Excel .xls o .xlsx proveniente de Crystal Reports.
+    Recorre TODAS las pestañas del archivo (no solo la primera), detecta el
+    encabezado de cada una por separado (porque cada hoja puede traer sus
+    propias filas de título arriba) y las combina en un único DataFrame.
     Devuelve un DataFrame limpio con encabezados detectados.
     """
     nombre = getattr(archivo, "name", str(archivo))
@@ -241,11 +244,9 @@ def leer_excel_crystal(archivo) -> pd.DataFrame:
         with open(archivo, "rb") as f:
             contenido = f.read()
     buffer = io.BytesIO(contenido)
+    engine = "xlrd" if extension == ".xls" else "openpyxl"
     try:
-        if extension == ".xls":
-            raw = pd.read_excel(buffer, header=None, dtype=object, engine="xlrd")
-        else:
-            raw = pd.read_excel(buffer, header=None, dtype=object, engine="openpyxl")
+        libro = pd.ExcelFile(buffer, engine=engine)
     except ImportError as e:
         if extension == ".xls":
             raise ImportError(
@@ -254,13 +255,29 @@ def leer_excel_crystal(archivo) -> pd.DataFrame:
         raise
     except Exception as e:
         raise ValueError(f"No se pudo leer el archivo {nombre}. Detalle: {e}") from e
-    raw = raw.dropna(how="all").reset_index(drop=True)
-    if raw.empty:
-        raise ValueError(f"El archivo {nombre} está vacío o no tiene datos legibles.")
-    fila_header = detectar_fila_encabezado(raw)
-    columnas = hacer_columnas_unicas(raw.iloc[fila_header].tolist())
-    df = raw.iloc[fila_header + 1:].copy()
-    df.columns = columnas
+    dfs_hojas = []
+    for nombre_hoja in libro.sheet_names:
+        try:
+            raw_hoja = libro.parse(sheet_name=nombre_hoja, header=None, dtype=object)
+        except Exception:
+            # Hoja ilegible o corrupta: se omite en vez de tumbar todo el archivo.
+            continue
+        raw_hoja = raw_hoja.dropna(how="all").reset_index(drop=True)
+        if raw_hoja.empty:
+            continue
+        fila_header = detectar_fila_encabezado(raw_hoja)
+        columnas_hoja = hacer_columnas_unicas(raw_hoja.iloc[fila_header].tolist())
+        df_hoja = raw_hoja.iloc[fila_header + 1:].copy()
+        df_hoja.columns = columnas_hoja
+        df_hoja = df_hoja.dropna(how="all")
+        if not df_hoja.empty:
+            df_hoja["HOJA_ORIGEN"] = nombre_hoja
+            dfs_hojas.append(df_hoja)
+    if not dfs_hojas:
+        raise ValueError(f"El archivo {nombre} está vacío o no tiene datos legibles en ninguna pestaña.")
+    # Concatenar todas las hojas. Si tienen encabezados distintos, se unen por
+    # nombre de columna (outer) y lo que no exista en una hoja queda en NaN.
+    df = pd.concat(dfs_hojas, ignore_index=True, sort=False)
     # Quitar filas completamente vacías
     df = df.dropna(how="all").reset_index(drop=True)
     # Quitar filas que son encabezados repetidos o basura del reporte
@@ -277,10 +294,13 @@ def leer_excel_crystal(archivo) -> pd.DataFrame:
         if "CRYSTAL" in texto:
             return True
         return False
-    mascara_basura = df.apply(es_fila_basura, axis=1)
+    columnas_para_evaluar = [c for c in df.columns if c != "HOJA_ORIGEN"]
+    mascara_basura = df[columnas_para_evaluar].apply(es_fila_basura, axis=1)
     df = df.loc[~mascara_basura].reset_index(drop=True)
-    # Quitar columnas totalmente vacías
-    df = df.dropna(axis=1, how="all")
+    # Quitar columnas totalmente vacías (conservando HOJA_ORIGEN, que sirve de trazabilidad)
+    columnas_datos = [c for c in df.columns if c != "HOJA_ORIGEN"]
+    df_datos = df[columnas_datos].dropna(axis=1, how="all")
+    df = pd.concat([df_datos, df[["HOJA_ORIGEN"]]], axis=1)
     return df
 # ============================================================
 # PROCESAMIENTO DE ARCHIVOS 260
